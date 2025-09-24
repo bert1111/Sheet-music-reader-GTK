@@ -1,3 +1,4 @@
+#page_navigator.py
 class PageNavigator:
     def __init__(self):
         self.current_page = 0

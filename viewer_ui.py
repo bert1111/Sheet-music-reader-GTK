@@ -63,8 +63,12 @@ class PDFViewerUI(Gtk.Window):
         self.btn_pencil.connect("toggled", self.toggle_pencil)
         self.btn_box.pack_start(self.btn_pencil, True, True, 0)
 
-        self.btn_clear = Gtk.Button(label="Wis annotaties")
-        self.btn_clear.connect("clicked", self.clear_annotations)
+        self.btn_choose_color = Gtk.Button(label="Kies kleur")
+        self.btn_choose_color.connect("clicked", self.choose_color)
+        self.btn_box.pack_start(self.btn_choose_color, True, True, 0)
+
+        self.btn_clear = Gtk.ToggleButton(label="Wis geselecteerde annotatie")
+        self.btn_clear.connect("toggled", self.on_clear_toggled)
         self.btn_box.pack_start(self.btn_clear, True, True, 0)
 
         self.btn_save_quit = Gtk.Button(label="Opslaan & Afsluiten")
@@ -87,6 +91,10 @@ class PDFViewerUI(Gtk.Window):
 
         self.annotation_widget = AnnotationWidget()
         self.annotation_widget.set_visible(True)
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+        # Stel callback in om wijzigingen direct persistent te maken
+        self.annotation_widget.on_annotation_changed = self.save_annotations
+
         self.overlay.add_overlay(self.annotation_widget)
 
         self._create_navigation_buttons()
@@ -200,12 +208,38 @@ class PDFViewerUI(Gtk.Window):
                 Gtk.main_iteration()
         else:
             self.image.clear()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+
+    def zoom_in(self, button):
+        self.save_scroll_position()
+        self.current_zoom = min(3.0, self.current_zoom * 1.1)
+        self.save_page_settings()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
+
+    def zoom_out(self, button):
+        self.save_scroll_position()
+        self.current_zoom = max(0.1, self.current_zoom / 1.1)
+        self.save_page_settings()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
+
+    def rotate(self, button):
+        self.save_scroll_position()
+        self.current_rotation = (self.current_rotation + 90) % 360
+        self.save_page_settings()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
 
     def next_page(self):
         self.save_scroll_position()
         page = self.page_navigator.next_page()
         self.show_page(page)
         self.load_annotations()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
         self.restore_scroll_position(page)
 
     def prev_page(self):
@@ -213,25 +247,8 @@ class PDFViewerUI(Gtk.Window):
         page = self.page_navigator.prev_page()
         self.show_page(page)
         self.load_annotations()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
         self.restore_scroll_position(page)
-
-    def zoom_in(self, button):
-        self.save_scroll_position()
-        self.current_zoom = min(3.0, self.current_zoom * 1.1)
-        self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
-
-    def zoom_out(self, button):
-        self.save_scroll_position()
-        self.current_zoom = max(0.1, self.current_zoom / 1.1)
-        self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
-
-    def rotate(self, button):
-        self.save_scroll_position()
-        self.current_rotation = (self.current_rotation + 90) % 360
-        self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
 
     def save_page_settings(self):
         if self.filepath:
@@ -249,24 +266,45 @@ class PDFViewerUI(Gtk.Window):
 
     def toggle_pencil(self, btn):
         active = btn.get_active()
+        if active and self.btn_clear.get_active():
+            self.btn_clear.set_active(False)
         self.annotation_widget.set_drawing_enabled(active)
         self.annotation_widget.set_visible(True)
 
-    def clear_annotations(self, button):
-        self.annotation_widget.clear()
-        if self.filepath:
-            self.save_annotations()
+    def choose_color(self, button):
+        dialog = Gtk.ColorChooserDialog(title="Kies annotatiekleur", parent=self)
+        dialog.set_rgba(self.annotation_widget.current_color)
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            color = dialog.get_rgba()
+            self.annotation_widget.set_line_color(color)
+        dialog.destroy()
+
+    def on_clear_toggled(self, togglebutton):
+        active = togglebutton.get_active()
+        if active:
+            if self.btn_pencil.get_active():
+                self.btn_pencil.set_active(False)
+            self.annotation_widget.wis_modus = True
+            self.annotation_widget.set_drawing_enabled(False)
+        else:
+            self.annotation_widget.wis_modus = False
+            self.annotation_widget.set_drawing_enabled(self.btn_pencil.get_active())
+
+    def clear_selected_annotation(self, button):
+        self.annotation_widget.clear_selected_annotation()
+        self.save_annotations()
 
     def load_annotations(self):
         if not self.filepath:
             return
         annotations = self.annotation_storage.get(self.filepath, self.page_navigator.current_page)
-        self.annotation_widget.load_lines(annotations)
+        self.annotation_widget.load_annotations(annotations)
 
     def save_annotations(self):
         if not self.filepath:
             return
-        annotations = self.annotation_widget.lines
+        annotations = self.annotation_widget.get_serializable_annotations()
         self.annotation_storage.set(self.filepath, self.page_navigator.current_page, annotations)
         self.annotation_storage.save()
         self.save_scroll_positions_to_file()
@@ -322,3 +360,11 @@ class PDFViewerUI(Gtk.Window):
         self.btn_box.set_visible(not visible)
         self.longpress_source_id = None
         return False
+
+def main():
+    win = PDFViewerUI()
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

@@ -5,6 +5,7 @@ I am in the process of rewriting the code I had because I couldn't get the corre
 packages installed on my PostmarketOs device.
 This version is tested and some features work, like persistent zoom level and scroll per page.
 
-Annotations and library are to be added.
+Library are to be added.
+Annotations work partially.
 
 If someone can help with this, please do so because I am not a programmer.
