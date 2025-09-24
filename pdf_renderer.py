@@ -1,3 +1,4 @@
+#pdf_renderer.py
 import gi
 gi.require_version("Poppler", "0.18")
 gi.require_version("Gtk", "3.0")

@@ -1,3 +1,4 @@
+#main.py
 from viewer_ui import PDFViewerUI
 import gi
 gi.require_version("Gtk", "3.0")
