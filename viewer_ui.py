@@ -1,7 +1,6 @@
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
-import json
 import os
 
 from pdf_renderer import PDFRenderer
@@ -35,7 +34,6 @@ class PDFViewerUI(Gtk.Window):
         self.current_rotation = 0
 
         self.longpress_source_id = None
-        self.scroll_positions = {}
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.add(vbox)
@@ -92,17 +90,14 @@ class PDFViewerUI(Gtk.Window):
         self.annotation_widget = AnnotationWidget()
         self.annotation_widget.set_visible(True)
         self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        # Stel callback in om wijzigingen direct persistent te maken
         self.annotation_widget.on_annotation_changed = self.save_annotations
-
         self.overlay.add_overlay(self.annotation_widget)
 
         self._create_navigation_buttons()
         for btn in [self.btn_left, self.btn_right, self.btn_top, self.btn_bottom]:
             self.main_overlay.add_overlay(btn)
 
-        self.overlay.add_events(Gdk.EventMask.BUTTON_PRESS_MASK |
-                                Gdk.EventMask.BUTTON_RELEASE_MASK)
+        self.overlay.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
         self.overlay.connect("button-press-event", self.on_touch_down)
         self.overlay.connect("button-release-event", self.on_touch_up)
 
@@ -143,41 +138,6 @@ class PDFViewerUI(Gtk.Window):
         self.btn_bottom.set_valign(Gtk.Align.END)
         self.btn_bottom.set_size_request(-1, 100)
 
-    def save_scroll_position(self):
-        hadjust = self.scrolled_window.get_hadjustment()
-        vadjust = self.scrolled_window.get_vadjustment()
-        self.scroll_positions[self.page_navigator.current_page] = (hadjust.get_value(), vadjust.get_value())
-
-    def restore_scroll_position(self, page_number):
-        if page_number in self.scroll_positions:
-            hadjust = self.scrolled_window.get_hadjustment()
-            vadjust = self.scrolled_window.get_vadjustment()
-            h_val, v_val = self.scroll_positions[page_number]
-            GLib.idle_add(hadjust.set_value, h_val)
-            GLib.idle_add(vadjust.set_value, v_val)
-
-    def save_scroll_positions_to_file(self):
-        if not self.filepath:
-            return
-        filename = self.filepath + ".scroll.json"
-        try:
-            with open(filename, "w") as f:
-                json.dump(self.scroll_positions, f)
-        except Exception as e:
-            print(f"Fout bij opslaan van scrollposities: {e}")
-
-    def load_scroll_positions_from_file(self):
-        if not self.filepath:
-            return
-        filename = self.filepath + ".scroll.json"
-        if os.path.exists(filename):
-            try:
-                with open(filename, "r") as f:
-                    loaded = json.load(f)
-                    self.scroll_positions = {int(k): tuple(v) for k, v in loaded.items()}
-            except Exception as e:
-                print(f"Fout bij laden van scrollposities: {e}")
-
     def open_pdf(self, button):
         open_pdf_filechooser(self.load_pdf)
 
@@ -185,17 +145,17 @@ class PDFViewerUI(Gtk.Window):
         self.filepath = filepath
         self.pdf_renderer.open_pdf(filepath)
         self.page_navigator.set_total_pages(self.pdf_renderer.get_page_count())
-        self.load_scroll_positions_from_file()
         self.show_page(self.page_navigator.current_page)
         self.load_annotations()
         self.btn_open.set_visible(False)
-        self.restore_scroll_position(self.page_navigator.current_page)
 
     def show_page(self, page_number):
         if self.filepath:
             settings = self.page_settings.get(self.filepath, page_number)
             self.current_zoom = settings.get("zoom", 1.0)
             self.current_rotation = settings.get("rotation", 0)
+            scroll_x = settings.get("scroll_x", 0)
+            scroll_y = settings.get("scroll_y", 0)
         res = self.pdf_renderer.render_page(
             page_number,
             zoom=self.current_zoom,
@@ -210,45 +170,10 @@ class PDFViewerUI(Gtk.Window):
             self.image.clear()
         self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
 
-    def zoom_in(self, button):
-        self.save_scroll_position()
-        self.current_zoom = min(3.0, self.current_zoom * 1.1)
-        self.save_page_settings()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        self.show_page(self.page_navigator.current_page)
-        self.save_annotations()
-
-    def zoom_out(self, button):
-        self.save_scroll_position()
-        self.current_zoom = max(0.1, self.current_zoom / 1.1)
-        self.save_page_settings()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        self.show_page(self.page_navigator.current_page)
-        self.save_annotations()
-
-    def rotate(self, button):
-        self.save_scroll_position()
-        self.current_rotation = (self.current_rotation + 90) % 360
-        self.save_page_settings()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        self.show_page(self.page_navigator.current_page)
-        self.save_annotations()
-
-    def next_page(self):
-        self.save_scroll_position()
-        page = self.page_navigator.next_page()
-        self.show_page(page)
-        self.load_annotations()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        self.restore_scroll_position(page)
-
-    def prev_page(self):
-        self.save_scroll_position()
-        page = self.page_navigator.prev_page()
-        self.show_page(page)
-        self.load_annotations()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-        self.restore_scroll_position(page)
+        hadjust = self.scrolled_window.get_hadjustment()
+        vadjust = self.scrolled_window.get_vadjustment()
+        hadjust.set_value(scroll_x)
+        vadjust.set_value(scroll_y)
 
     def save_page_settings(self):
         if self.filepath:
@@ -263,6 +188,38 @@ class PDFViewerUI(Gtk.Window):
                 scroll_y=vadjust.get_value()
             )
             self.page_settings.save()
+
+    def zoom_in(self, button):
+        self.current_zoom = min(3.0, self.current_zoom * 1.1)
+        self.save_page_settings()
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
+
+    def zoom_out(self, button):
+        self.current_zoom = max(0.1, self.current_zoom / 1.1)
+        self.save_page_settings()
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
+
+    def rotate(self, button):
+        self.current_rotation = (self.current_rotation + 90) % 360
+        self.save_page_settings()
+        self.show_page(self.page_navigator.current_page)
+        self.save_annotations()
+
+    def next_page(self):
+        self.save_page_settings()
+        page = self.page_navigator.next_page()
+        self.show_page(page)
+        self.load_annotations()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
+
+    def prev_page(self):
+        self.save_page_settings()
+        page = self.page_navigator.prev_page()
+        self.show_page(page)
+        self.load_annotations()
+        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
 
     def toggle_pencil(self, btn):
         active = btn.get_active()
@@ -307,16 +264,15 @@ class PDFViewerUI(Gtk.Window):
         annotations = self.annotation_widget.get_serializable_annotations()
         self.annotation_storage.set(self.filepath, self.page_navigator.current_page, annotations)
         self.annotation_storage.save()
-        self.save_scroll_positions_to_file()
 
     def save_and_quit(self, button=None):
+        self.save_page_settings()
         self.save_annotations()
-        self.save_scroll_positions_to_file()
         Gtk.main_quit()
 
     def on_quit(self, *args):
+        self.save_page_settings()
         self.save_annotations()
-        self.save_scroll_positions_to_file()
         Gtk.main_quit()
 
     def on_touch_down(self, widget, event):
