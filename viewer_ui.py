@@ -162,12 +162,18 @@ class PDFViewerUI(Gtk.Window):
             rotation=self.current_rotation
         )
         if res:
-            pixbuf, _ = res
+            pixbuf, pdf_size = res
             self.image.set_from_pixbuf(pixbuf)
+            
+            # *** NIEUW: Stel PDF-dimensies in op de annotation widget ***
+            if pdf_size:
+                self.annotation_widget.set_pdf_dimensions(pdf_size[0], pdf_size[1])
+            
             while Gtk.events_pending():
                 Gtk.main_iteration()
         else:
             self.image.clear()
+        
         self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
 
         hadjust = self.scrolled_window.get_hadjustment()
