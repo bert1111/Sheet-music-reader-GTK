@@ -5,10 +5,12 @@ import math
 
 class Annotation:
     def __init__(self, points, color):
-        self.points = points  # lijst van (x,y)
+        self.points = points  # lijst van (x,y) in PDF-coordinaten
         self.color = color    # Gdk.RGBA kleur
 
     def get_bounding_box(self):
+        if not self.points:
+            return (0, 0, 0, 0)
         xs = [p[0] for p in self.points]
         ys = [p[1] for p in self.points]
         min_x, max_x = min(xs), max(xs)
@@ -38,10 +40,17 @@ class AnnotationWidget(Gtk.DrawingArea):
         self.current_color = Gdk.RGBA(1,0,0,1)
         self.current_zoom = 1.0
         self.current_rotation = 0
+        
+        # *** NIEUW: Houd de PDF-afmetingen bij ***
+        self.pdf_width = 0
+        self.pdf_height = 0
+        self.widget_width = 0
+        self.widget_height = 0
 
         self.on_annotation_changed = None
 
         self.connect("draw", self.on_draw)
+        self.connect("size-allocate", self.on_size_allocate)
         self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK |
                         Gdk.EventMask.BUTTON_RELEASE_MASK |
                         Gdk.EventMask.POINTER_MOTION_MASK)
@@ -59,21 +68,86 @@ class AnnotationWidget(Gtk.DrawingArea):
             self.wis_modus = False
         self.queue_draw()
 
+    # *** NIEUW: Stel PDF-afmetingen in ***
+    def set_pdf_dimensions(self, pdf_width, pdf_height):
+        self.pdf_width = pdf_width
+        self.pdf_height = pdf_height
+        self.queue_draw()
+
     def set_zoom_and_rotation(self, zoom, rotation):
         self.current_zoom = zoom
         self.current_rotation = rotation
         self.queue_draw()
 
-    # Zet muis coördinaten terug naar pagina coördinaten dmv inverse transform
-    def _inverse_transform(self, x, y):
+    def on_size_allocate(self, widget, allocation):
+        self.widget_width = allocation.width
+        self.widget_height = allocation.height
+
+    # *** HERZIEN: Converteer muiscoördinaten naar PDF-coördinaten ***
+    def _mouse_to_pdf_coords(self, mouse_x, mouse_y):
+        if self.pdf_width == 0 or self.pdf_height == 0:
+            return mouse_x, mouse_y
+        
+        # Bereken schaalfactor van widget naar PDF
+        scale_x = self.pdf_width / self.widget_width if self.widget_width > 0 else 1.0
+        scale_y = self.pdf_height / self.widget_height if self.widget_height > 0 else 1.0
+        
+        # Converteer naar PDF-coördinaten
+        pdf_x = mouse_x * scale_x
+        pdf_y = mouse_y * scale_y
+        
+        # Pas inverse zoom toe
+        pdf_x /= self.current_zoom
+        pdf_y /= self.current_zoom
+        
+        # Pas inverse rotatie toe (rotatie om het centrum van de PDF)
+        center_x = self.pdf_width / (2 * self.current_zoom)
+        center_y = self.pdf_height / (2 * self.current_zoom)
+        
+        rel_x = pdf_x - center_x
+        rel_y = pdf_y - center_y
+        
         angle = -math.radians(self.current_rotation)
-        zx, zy = x / self.current_zoom, y / self.current_zoom
-        tx = zx * math.cos(angle) - zy * math.sin(angle)
-        ty = zx * math.sin(angle) + zy * math.cos(angle)
-        return tx, ty
+        rotated_x = rel_x * math.cos(angle) - rel_y * math.sin(angle)
+        rotated_y = rel_x * math.sin(angle) + rel_y * math.cos(angle)
+        
+        return rotated_x + center_x, rotated_y + center_y
+
+    # *** HERZIEN: Converteer PDF-coördinaten naar widget-coördinaten ***
+    def _pdf_to_widget_coords(self, pdf_x, pdf_y):
+        if self.pdf_width == 0 or self.pdf_height == 0:
+            return pdf_x, pdf_y
+        
+        # Pas rotatie toe (rotatie om het centrum van de PDF)
+        center_x = self.pdf_width / (2 * self.current_zoom)
+        center_y = self.pdf_height / (2 * self.current_zoom)
+        
+        rel_x = pdf_x - center_x
+        rel_y = pdf_y - center_y
+        
+        angle = math.radians(self.current_rotation)
+        rotated_x = rel_x * math.cos(angle) - rel_y * math.sin(angle)
+        rotated_y = rel_x * math.sin(angle) + rel_y * math.cos(angle)
+        
+        # Terug naar absolute coördinaten
+        rotated_x += center_x
+        rotated_y += center_y
+        
+        # Pas zoom toe
+        zoomed_x = rotated_x * self.current_zoom
+        zoomed_y = rotated_y * self.current_zoom
+        
+        # Converteer naar widget-coördinaten
+        scale_x = self.widget_width / self.pdf_width if self.pdf_width > 0 else 1.0
+        scale_y = self.widget_height / self.pdf_height if self.pdf_height > 0 else 1.0
+        
+        widget_x = zoomed_x * scale_x
+        widget_y = zoomed_y * scale_y
+        
+        return widget_x, widget_y
 
     def on_button_press(self, widget, event):
-        x, y = self._inverse_transform(event.x, event.y)
+        x, y = self._mouse_to_pdf_coords(event.x, event.y)
         if self.wis_modus and event.button == 1:
             for ann in reversed(self.annotations):
                 if ann.contains_point(x, y):
@@ -110,27 +184,23 @@ class AnnotationWidget(Gtk.DrawingArea):
 
     def on_motion_notify(self, widget, event):
         if self.drawing_enabled and self.drawing:
-            x, y = self._inverse_transform(event.x, event.y)
+            x, y = self._mouse_to_pdf_coords(event.x, event.y)
             self.current_line.append((x, y))
             self.queue_draw()
 
     def on_draw(self, widget, cr):
         cr.set_line_width(2)
 
-        cr.save()
-        # Pas globale zoom en rotatie toe op de hele context
-        cr.scale(self.current_zoom, self.current_zoom)
-        if self.current_rotation != 0:
-            cr.rotate(math.radians(self.current_rotation))
-
         # Teken annotaties
         for ann in self.annotations:
             cr.set_source_rgba(ann.color.red, ann.color.green, ann.color.blue, ann.color.alpha)
             pts = ann.points
             if len(pts) > 1:
-                cr.move_to(*pts[0])
+                wx, wy = self._pdf_to_widget_coords(*pts[0])
+                cr.move_to(wx, wy)
                 for p in pts[1:]:
-                    cr.line_to(*p)
+                    wx, wy = self._pdf_to_widget_coords(*p)
+                    cr.line_to(wx, wy)
                 cr.stroke()
 
         # Tekenen van lopende lijn
@@ -139,24 +209,24 @@ class AnnotationWidget(Gtk.DrawingArea):
                                self.current_color.green,
                                self.current_color.blue,
                                self.current_color.alpha)
-            cr.move_to(*self.current_line[0])
+            wx, wy = self._pdf_to_widget_coords(*self.current_line[0])
+            cr.move_to(wx, wy)
             for p in self.current_line[1:]:
-                cr.line_to(*p)
+                wx, wy = self._pdf_to_widget_coords(*p)
+                cr.line_to(wx, wy)
             cr.stroke()
-        cr.restore()
 
-        # Highlight geselecteerde annotatie ook met tranform
+        # Highlight geselecteerde annotatie
         if self.selected_annotation:
-            cr.save()
-            cr.scale(self.current_zoom, self.current_zoom)
-            if self.current_rotation != 0:
-                cr.rotate(math.radians(self.current_rotation))
             bbox = self.selected_annotation.get_bounding_box()
-            cr.set_source_rgba(0, 0, 1, 0.5)
-            cr.set_line_width(3)
-            cr.rectangle(*bbox)
-            cr.stroke()
-            cr.restore()
+            if bbox[2] > 0 and bbox[3] > 0:  # Alleen tekenen als bounding box geldig is
+                x1, y1 = self._pdf_to_widget_coords(bbox[0], bbox[1])
+                x2, y2 = self._pdf_to_widget_coords(bbox[0] + bbox[2], bbox[1] + bbox[3])
+                
+                cr.set_source_rgba(0, 0, 1, 0.5)
+                cr.set_line_width(3)
+                cr.rectangle(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+                cr.stroke()
 
     def clear_selected_annotation(self):
         if self.selected_annotation and self.selected_annotation in self.annotations:
