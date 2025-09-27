@@ -1,4 +1,3 @@
-#annotation_widget.py
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
@@ -24,6 +23,13 @@ class Annotation:
                 return True
         return False
 
+    def scale_non_uniform(self, scale_x, scale_y, anchor=None):
+        if anchor is None:
+            bbox = self.get_bounding_box()
+            anchor = (bbox[0], bbox[1])
+        ax, ay = anchor
+        self.points = [((x - ax) * scale_x + ax, (y - ay) * scale_y + ay) for (x, y) in self.points]
+
 class AnnotationWidget(Gtk.DrawingArea):
     def __init__(self):
         super().__init__()
@@ -40,6 +46,11 @@ class AnnotationWidget(Gtk.DrawingArea):
         self.dragging_enabled = False  # Sleepmodus aan/uit
         self.dragging_annotation = False
         self.drag_start_pdf = None
+
+        self.resizing_enabled = False  # Resize-modus aan/uit
+        self.resizing_annotation = False
+        self.resize_start_pdf = None
+        self.resize_handle = None  # 'top-left', 'top-right', 'bottom-left', 'bottom-right'
 
         self.current_color = Gdk.RGBA(1, 0, 0, 1)
         self.current_zoom = 1.0
@@ -70,6 +81,7 @@ class AnnotationWidget(Gtk.DrawingArea):
         self.drawing_enabled = enabled
         if enabled:
             self.wis_modus = False
+            self.resizing_enabled = False
         self.queue_draw()
 
     def set_pdf_dimensions(self, pdf_width, pdf_height):
@@ -141,6 +153,21 @@ class AnnotationWidget(Gtk.DrawingArea):
 
     def on_button_press(self, widget, event):
         x, y = self._mouse_to_pdf_coords(event.x, event.y)
+        if self.resizing_enabled and event.button == 1:
+            if self.selected_annotation:
+                bbox = self.selected_annotation.get_bounding_box()
+                corners = {
+                    'top-left': (bbox[0], bbox[1]),
+                    'top-right': (bbox[0] + bbox[2], bbox[1]),
+                    'bottom-left': (bbox[0], bbox[1] + bbox[3]),
+                    'bottom-right': (bbox[0] + bbox[2], bbox[1] + bbox[3]),
+                }
+                for corner, (cx, cy) in corners.items():
+                    if abs(x - cx) <= 10 and abs(y - cy) <= 10:
+                        self.resizing_annotation = True
+                        self.resize_start_pdf = (x, y)
+                        self.resize_handle = corner
+                        return
         if self.wis_modus and event.button == 1:
             for ann in reversed(self.annotations):
                 if ann.contains_point(x, y):
@@ -189,6 +216,12 @@ class AnnotationWidget(Gtk.DrawingArea):
             self.drag_start_pdf = None
             if self.on_annotation_changed:
                 self.on_annotation_changed()
+        elif self.resizing_enabled and self.resizing_annotation:
+            self.resizing_annotation = False
+            self.resize_start_pdf = None
+            self.resize_handle = None
+            if self.on_annotation_changed:
+                self.on_annotation_changed()
 
     def on_motion_notify(self, widget, event):
         if self.drawing_enabled and self.drawing:
@@ -202,6 +235,53 @@ class AnnotationWidget(Gtk.DrawingArea):
             moved_points = [(px + dx, py + dy) for (px, py) in self.selected_annotation.points]
             self.selected_annotation.points = moved_points
             self.drag_start_pdf = (x, y)
+            self.queue_draw()
+        elif self.resizing_enabled and self.resizing_annotation and self.selected_annotation:
+            x, y = self._mouse_to_pdf_coords(event.x, event.y)
+            start_x, start_y = self.resize_start_pdf
+
+            bbox = self.selected_annotation.get_bounding_box()
+
+            if self.resize_handle == 'top-left':
+                anchor_x, anchor_y = bbox[0] + bbox[2], bbox[1] + bbox[3]  # bottom-right
+            elif self.resize_handle == 'top-right':
+                anchor_x, anchor_y = bbox[0], bbox[1] + bbox[3]  # bottom-left
+            elif self.resize_handle == 'bottom-left':
+                anchor_x, anchor_y = bbox[0] + bbox[2], bbox[1]  # top-right
+            elif self.resize_handle == 'bottom-right':
+                anchor_x, anchor_y = bbox[0], bbox[1]  # top-left
+            else:
+                anchor_x, anchor_y = bbox[0], bbox[1]
+
+            old_dx_start = start_x - anchor_x
+            old_dy_start = start_y - anchor_y
+            # voorkom delen door 0
+            old_dx_start = old_dx_start if old_dx_start != 0 else 1e-5
+            old_dy_start = old_dy_start if old_dy_start != 0 else 1e-5
+
+            new_dx = x - anchor_x
+            new_dy = y - anchor_y
+
+            scale_x = new_dx / old_dx_start
+            scale_y = new_dy / old_dy_start
+
+            # Voor elke corner schaal in beide assen
+            # (kan uitgebreid worden voor aparte assen op basis van corner, zo nodig)
+            scale_x_use = scale_x
+            scale_y_use = scale_y
+
+            if scale_x_use < 0.1:
+                scale_x_use = 0.1
+            if scale_y_use < 0.1:
+                scale_y_use = 0.1
+
+            if scale_x_use > 10:
+                scale_x_use = 10
+            if scale_y_use > 10:
+                scale_y_use = 10
+
+            self.selected_annotation.scale_non_uniform(scale_x_use, scale_y_use, anchor=(anchor_x, anchor_y))
+            self.resize_start_pdf = (x, y)
             self.queue_draw()
 
     def on_draw(self, widget, cr):
@@ -238,6 +318,18 @@ class AnnotationWidget(Gtk.DrawingArea):
                 cr.set_line_width(3)
                 cr.rectangle(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
                 cr.stroke()
+
+                corners = [
+                    (bbox[0], bbox[1]),
+                    (bbox[0] + bbox[2], bbox[1]),
+                    (bbox[0], bbox[1] + bbox[3]),
+                    (bbox[0] + bbox[2], bbox[1] + bbox[3])
+                ]
+                cr.set_source_rgba(0, 1, 0, 1)
+                for (cx, cy) in corners:
+                    wx, wy = self._pdf_to_widget_coords(cx, cy)
+                    cr.arc(wx, wy, 8, 0, 2 * math.pi)
+                    cr.fill()
 
     def clear_selected_annotation(self):
         if self.selected_annotation and self.selected_annotation in self.annotations:
