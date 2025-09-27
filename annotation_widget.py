@@ -5,7 +5,7 @@ import math
 
 class Annotation:
     def __init__(self, points, color):
-        self.points = points  # lijst van (x,y) in PDF-coordinaten
+        self.points = points  # lijst van (x,y) in PDF-coördinaten
         self.color = color    # Gdk.RGBA kleur
 
     def get_bounding_box(self):
@@ -30,18 +30,21 @@ class AnnotationWidget(Gtk.DrawingArea):
 
         self.annotations = []
         self.current_line = []
-
         self.drawing = False
         self.drawing_enabled = False
         self.wis_modus = False
 
         self.selected_annotation = None
 
-        self.current_color = Gdk.RGBA(1,0,0,1)
+        self.dragging_enabled = False  # Sleepmodus aan/uit
+        self.dragging_annotation = False
+        self.drag_start_pdf = None
+
+        self.current_color = Gdk.RGBA(1, 0, 0, 1)
         self.current_zoom = 1.0
         self.current_rotation = 0
-        
-        # *** NIEUW: Houd de PDF-afmetingen bij ***
+
+        # PDF & widget afmetingen
         self.pdf_width = 0
         self.pdf_height = 0
         self.widget_width = 0
@@ -55,8 +58,8 @@ class AnnotationWidget(Gtk.DrawingArea):
                         Gdk.EventMask.BUTTON_RELEASE_MASK |
                         Gdk.EventMask.POINTER_MOTION_MASK)
         self.connect("button-press-event", self.on_button_press)
-        self.connect("button-release-event",self.on_button_release)
-        self.connect("motion-notify-event",self.on_motion_notify)
+        self.connect("button-release-event", self.on_button_release)
+        self.connect("motion-notify-event", self.on_motion_notify)
 
     def set_line_color(self, rgba: Gdk.RGBA):
         self.current_color = rgba
@@ -68,7 +71,6 @@ class AnnotationWidget(Gtk.DrawingArea):
             self.wis_modus = False
         self.queue_draw()
 
-    # *** NIEUW: Stel PDF-afmetingen in ***
     def set_pdf_dimensions(self, pdf_width, pdf_height):
         self.pdf_width = pdf_width
         self.pdf_height = pdf_height
@@ -83,67 +85,57 @@ class AnnotationWidget(Gtk.DrawingArea):
         self.widget_width = allocation.width
         self.widget_height = allocation.height
 
-    # *** HERZIEN: Converteer muiscoördinaten naar PDF-coördinaten ***
     def _mouse_to_pdf_coords(self, mouse_x, mouse_y):
         if self.pdf_width == 0 or self.pdf_height == 0:
             return mouse_x, mouse_y
-        
-        # Bereken schaalfactor van widget naar PDF
+
         scale_x = self.pdf_width / self.widget_width if self.widget_width > 0 else 1.0
         scale_y = self.pdf_height / self.widget_height if self.widget_height > 0 else 1.0
-        
-        # Converteer naar PDF-coördinaten
+
         pdf_x = mouse_x * scale_x
         pdf_y = mouse_y * scale_y
-        
-        # Pas inverse zoom toe
+
         pdf_x /= self.current_zoom
         pdf_y /= self.current_zoom
-        
-        # Pas inverse rotatie toe (rotatie om het centrum van de PDF)
+
         center_x = self.pdf_width / (2 * self.current_zoom)
         center_y = self.pdf_height / (2 * self.current_zoom)
-        
+
         rel_x = pdf_x - center_x
         rel_y = pdf_y - center_y
-        
+
         angle = -math.radians(self.current_rotation)
         rotated_x = rel_x * math.cos(angle) - rel_y * math.sin(angle)
         rotated_y = rel_x * math.sin(angle) + rel_y * math.cos(angle)
-        
+
         return rotated_x + center_x, rotated_y + center_y
 
-    # *** HERZIEN: Converteer PDF-coördinaten naar widget-coördinaten ***
     def _pdf_to_widget_coords(self, pdf_x, pdf_y):
         if self.pdf_width == 0 or self.pdf_height == 0:
             return pdf_x, pdf_y
-        
-        # Pas rotatie toe (rotatie om het centrum van de PDF)
+
         center_x = self.pdf_width / (2 * self.current_zoom)
         center_y = self.pdf_height / (2 * self.current_zoom)
-        
+
         rel_x = pdf_x - center_x
         rel_y = pdf_y - center_y
-        
+
         angle = math.radians(self.current_rotation)
         rotated_x = rel_x * math.cos(angle) - rel_y * math.sin(angle)
         rotated_y = rel_x * math.sin(angle) + rel_y * math.cos(angle)
-        
-        # Terug naar absolute coördinaten
+
         rotated_x += center_x
         rotated_y += center_y
-        
-        # Pas zoom toe
+
         zoomed_x = rotated_x * self.current_zoom
         zoomed_y = rotated_y * self.current_zoom
-        
-        # Converteer naar widget-coördinaten
+
         scale_x = self.widget_width / self.pdf_width if self.pdf_width > 0 else 1.0
         scale_y = self.widget_height / self.pdf_height if self.pdf_height > 0 else 1.0
-        
+
         widget_x = zoomed_x * scale_x
         widget_y = zoomed_y * scale_y
-        
+
         return widget_x, widget_y
 
     def on_button_press(self, widget, event):
@@ -164,12 +156,22 @@ class AnnotationWidget(Gtk.DrawingArea):
             self.queue_draw()
         else:
             if event.button == 1:
-                self.selected_annotation = None
-                for ann in reversed(self.annotations):
-                    if ann.contains_point(x, y):
-                        self.selected_annotation = ann
-                        break
-                self.queue_draw()
+                if self.dragging_enabled:
+                    self.selected_annotation = None
+                    for ann in reversed(self.annotations):
+                        if ann.contains_point(x, y):
+                            self.selected_annotation = ann
+                            self.dragging_annotation = True
+                            self.drag_start_pdf = (x, y)
+                            break
+                    self.queue_draw()
+                else:
+                    self.selected_annotation = None
+                    for ann in reversed(self.annotations):
+                        if ann.contains_point(x, y):
+                            self.selected_annotation = ann
+                            break
+                    self.queue_draw()
 
     def on_button_release(self, widget, event):
         if self.drawing_enabled and event.button == 1 and self.drawing:
@@ -181,17 +183,29 @@ class AnnotationWidget(Gtk.DrawingArea):
                     self.on_annotation_changed()
             self.current_line = []
             self.queue_draw()
+        elif self.dragging_enabled and self.dragging_annotation:
+            self.dragging_annotation = False
+            self.drag_start_pdf = None
+            if self.on_annotation_changed:
+                self.on_annotation_changed()
 
     def on_motion_notify(self, widget, event):
         if self.drawing_enabled and self.drawing:
             x, y = self._mouse_to_pdf_coords(event.x, event.y)
             self.current_line.append((x, y))
             self.queue_draw()
+        elif self.dragging_enabled and self.dragging_annotation and self.selected_annotation:
+            x, y = self._mouse_to_pdf_coords(event.x, event.y)
+            dx = x - self.drag_start_pdf[0]
+            dy = y - self.drag_start_pdf[1]
+            moved_points = [(px + dx, py + dy) for (px, py) in self.selected_annotation.points]
+            self.selected_annotation.points = moved_points
+            self.drag_start_pdf = (x, y)
+            self.queue_draw()
 
     def on_draw(self, widget, cr):
         cr.set_line_width(2)
 
-        # Teken annotaties
         for ann in self.annotations:
             cr.set_source_rgba(ann.color.red, ann.color.green, ann.color.blue, ann.color.alpha)
             pts = ann.points
@@ -203,12 +217,9 @@ class AnnotationWidget(Gtk.DrawingArea):
                     cr.line_to(wx, wy)
                 cr.stroke()
 
-        # Tekenen van lopende lijn
         if self.drawing and len(self.current_line) > 1:
-            cr.set_source_rgba(self.current_color.red,
-                               self.current_color.green,
-                               self.current_color.blue,
-                               self.current_color.alpha)
+            cr.set_source_rgba(self.current_color.red, self.current_color.green,
+                               self.current_color.blue, self.current_color.alpha)
             wx, wy = self._pdf_to_widget_coords(*self.current_line[0])
             cr.move_to(wx, wy)
             for p in self.current_line[1:]:
@@ -216,13 +227,12 @@ class AnnotationWidget(Gtk.DrawingArea):
                 cr.line_to(wx, wy)
             cr.stroke()
 
-        # Highlight geselecteerde annotatie
         if self.selected_annotation:
             bbox = self.selected_annotation.get_bounding_box()
-            if bbox[2] > 0 and bbox[3] > 0:  # Alleen tekenen als bounding box geldig is
+            if bbox[2] > 0 and bbox[3] > 0:
                 x1, y1 = self._pdf_to_widget_coords(bbox[0], bbox[1])
                 x2, y2 = self._pdf_to_widget_coords(bbox[0] + bbox[2], bbox[1] + bbox[3])
-                
+
                 cr.set_source_rgba(0, 0, 1, 0.5)
                 cr.set_line_width(3)
                 cr.rectangle(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
@@ -248,7 +258,7 @@ class AnnotationWidget(Gtk.DrawingArea):
         self.annotations.clear()
         for ann in annotations_data or []:
             points = ann.get("points", [])
-            color_dict = ann.get("color", {"red":1,"green":0,"blue":0,"alpha":1})
+            color_dict = ann.get("color", {"red": 1, "green": 0, "blue": 0, "alpha": 1})
             color = Gdk.RGBA(color_dict["red"], color_dict["green"], color_dict["blue"], color_dict["alpha"])
             self.annotations.append(Annotation(points, color))
         self.queue_draw()
