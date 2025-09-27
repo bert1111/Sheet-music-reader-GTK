@@ -33,6 +33,13 @@ class PDFViewerUI(Gtk.Window):
         self.current_zoom = 1.0
         self.current_rotation = 0
 
+        # Concert-navigatie attributen
+        self.concert_order = []
+        self.concert_piece_index = 0
+        self.concert_folder = None
+        self.total_pages_current_pdf = 0
+        self.current_page_in_piece = 0
+
         self.longpress_source_id = None
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -108,7 +115,6 @@ class PDFViewerUI(Gtk.Window):
 
         self.connect("delete-event", self.on_quit)
 
-        # Laad persistent basispad of vraag om te selecteren
         self.muziek_basispad = self.page_settings.get_basispad()
         if not self.muziek_basispad or not os.path.isdir(self.muziek_basispad):
             self.muziek_basispad = self.kies_muziek_basispad()
@@ -175,7 +181,7 @@ class PDFViewerUI(Gtk.Window):
         dialog.destroy()
 
         if pad_or_kest:
-            open_pdf_filechooser(self.load_pdf, start_folder=pad_or_kest)
+            open_pdf_filechooser(self.load_pdf_or_concert, start_folder=pad_or_kest)
 
     def _create_navigation_buttons(self):
         def make_invisible_button():
@@ -212,16 +218,88 @@ class PDFViewerUI(Gtk.Window):
         self.btn_bottom.set_valign(Gtk.Align.END)
         self.btn_bottom.set_size_request(-1, 100)
 
-    def open_pdf(self, button):
-        open_pdf_filechooser(self.load_pdf)
+    def load_pdf_or_concert(self, filepath):
+        base_dir = os.path.dirname(filepath)
+        concert_map = os.path.join(base_dir, "Concert")
+        if os.path.isdir(concert_map):
+            concert_txt = os.path.join(concert_map, "Concert.txt")
+            if os.path.isfile(concert_txt):
+                self.concert_order = self.get_concert_order(concert_map)
+                self.concert_piece_index = 0
+                self.concert_folder = concert_map
+                self.load_pdf_direct(self._get_pdf_path_for_current_piece())
+                return
 
-    def load_pdf(self, filepath):
+        self.concert_order = []
         self.filepath = filepath
         self.pdf_renderer.open_pdf(filepath)
-        self.page_navigator.set_total_pages(self.pdf_renderer.get_page_count())
-        self.show_page(self.page_navigator.current_page)
+        self.total_pages_current_pdf = self.pdf_renderer.get_page_count()
+        self.current_page_in_piece = 0
+        self.page_navigator.set_total_pages(self.total_pages_current_pdf)
+        self.show_page(self.current_page_in_piece)
         self.load_annotations()
-        self.btn_open.set_visible(False)
+
+    def _get_pdf_path_for_current_piece(self):
+        bovenliggende_map = os.path.dirname(self.concert_folder)
+        stuk_naam = self.concert_order[self.concert_piece_index]
+        return os.path.join(bovenliggende_map, stuk_naam + ".pdf")
+
+    def get_concert_order(self, concert_folder):
+        txt_path = os.path.join(concert_folder, "Concert.txt")
+        if not os.path.isfile(txt_path):
+            return []
+        with open(txt_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            return [title.strip() for title in content.split(",") if title.strip()]
+
+    def load_pdf_direct(self, filepath):
+        self.filepath = filepath
+        self.pdf_renderer.open_pdf(filepath)
+        self.total_pages_current_pdf = self.pdf_renderer.get_page_count()
+        self.current_page_in_piece = 0
+        self.page_navigator.set_total_pages(self.total_pages_current_pdf)
+        self.show_page(self.current_page_in_piece)
+        self.load_annotations()
+
+    def next_page(self, button=None):
+        if self.concert_order:
+            if self.current_page_in_piece < self.total_pages_current_pdf - 1:
+                self.current_page_in_piece += 1
+                self.show_page(self.current_page_in_piece)
+            else:
+                if self.concert_piece_index < len(self.concert_order) - 1:
+                    self.concert_piece_index += 1
+                    next_pdf = self._get_pdf_path_for_current_piece()
+                    if os.path.isfile(next_pdf):
+                        self.load_pdf_direct(next_pdf)
+                    else:
+                        print(f"PDF bestand niet gevonden: {next_pdf}")
+        else:
+            self.save_page_settings()
+            page = self.page_navigator.next_page()
+            self.show_page(page)
+            self.load_annotations()
+
+    def prev_page(self, button=None):
+        if self.concert_order:
+            if self.current_page_in_piece > 0:
+                self.current_page_in_piece -= 1
+                self.show_page(self.current_page_in_piece)
+            else:
+                if self.concert_piece_index > 0:
+                    self.concert_piece_index -= 1
+                    prev_pdf = self._get_pdf_path_for_current_piece()
+                    if os.path.isfile(prev_pdf):
+                        self.load_pdf_direct(prev_pdf)
+                        self.current_page_in_piece = self.total_pages_current_pdf - 1
+                        self.show_page(self.current_page_in_piece)
+                    else:
+                        print(f"PDF bestand niet gevonden: {prev_pdf}")
+        else:
+            self.save_page_settings()
+            page = self.page_navigator.prev_page()
+            self.show_page(page)
+            self.load_annotations()
 
     def show_page(self, page_number):
         if self.filepath:
@@ -230,6 +308,7 @@ class PDFViewerUI(Gtk.Window):
             self.current_rotation = settings.get("rotation", 0)
             scroll_x = settings.get("scroll_x", 0)
             scroll_y = settings.get("scroll_y", 0)
+
         res = self.pdf_renderer.render_page(
             page_number,
             zoom=self.current_zoom,
@@ -260,7 +339,7 @@ class PDFViewerUI(Gtk.Window):
             vadjust = self.scrolled_window.get_vadjustment()
             self.page_settings.set(
                 self.filepath,
-                self.page_navigator.current_page,
+                self.current_page_in_piece if self.concert_order else self.page_navigator.current_page,
                 zoom=self.current_zoom,
                 rotation=self.current_rotation,
                 scroll_x=hadjust.get_value(),
@@ -271,34 +350,20 @@ class PDFViewerUI(Gtk.Window):
     def zoom_in(self, button):
         self.current_zoom = min(3.0, self.current_zoom * 1.1)
         self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
+        self.show_page(self.current_page_in_piece if self.concert_order else self.page_navigator.current_page)
         self.save_annotations()
 
     def zoom_out(self, button):
         self.current_zoom = max(0.1, self.current_zoom / 1.1)
         self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
+        self.show_page(self.current_page_in_piece if self.concert_order else self.page_navigator.current_page)
         self.save_annotations()
 
     def rotate(self, button):
         self.current_rotation = (self.current_rotation + 90) % 360
         self.save_page_settings()
-        self.show_page(self.page_navigator.current_page)
+        self.show_page(self.current_page_in_piece if self.concert_order else self.page_navigator.current_page)
         self.save_annotations()
-
-    def next_page(self):
-        self.save_page_settings()
-        page = self.page_navigator.next_page()
-        self.show_page(page)
-        self.load_annotations()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
-
-    def prev_page(self):
-        self.save_page_settings()
-        page = self.page_navigator.prev_page()
-        self.show_page(page)
-        self.load_annotations()
-        self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
 
     def toggle_pencil(self, btn):
         active = btn.get_active()
@@ -353,14 +418,14 @@ class PDFViewerUI(Gtk.Window):
     def load_annotations(self):
         if not self.filepath:
             return
-        annotations = self.annotation_storage.get(self.filepath, self.page_navigator.current_page)
+        annotations = self.annotation_storage.get(self.filepath, self.current_page_in_piece if self.concert_order else self.page_navigator.current_page)
         self.annotation_widget.load_annotations(annotations)
 
     def save_annotations(self):
         if not self.filepath:
             return
         annotations = self.annotation_widget.get_serializable_annotations()
-        self.annotation_storage.set(self.filepath, self.page_navigator.current_page, annotations)
+        self.annotation_storage.set(self.filepath, self.current_page_in_piece if self.concert_order else self.page_navigator.current_page, annotations)
         self.annotation_storage.save()
 
     def save_and_quit(self, button=None):
