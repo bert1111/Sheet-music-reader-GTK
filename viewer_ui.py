@@ -33,7 +33,6 @@ class PDFViewerUI(Gtk.Window):
         self.current_zoom = 1.0
         self.current_rotation = 0
 
-        # Concert-navigatie attributen
         self.concert_order = []
         self.concert_piece_index = 0
         self.concert_folder = None
@@ -80,6 +79,10 @@ class PDFViewerUI(Gtk.Window):
         self.btn_clear = Gtk.ToggleButton(label="Wis geselecteerde annotatie")
         self.btn_clear.connect("toggled", self.on_clear_toggled)
         self.btn_box.pack_start(self.btn_clear, True, True, 0)
+
+        self.btn_resize = Gtk.ToggleButton(label="Annotatie schalen")
+        self.btn_resize.connect("toggled", self.toggle_resize_mode)
+        self.btn_box.pack_start(self.btn_resize, True, True, 0)
 
         self.btn_save_quit = Gtk.Button(label="Opslaan & Afsluiten")
         self.btn_save_quit.connect("clicked", self.save_and_quit)
@@ -371,8 +374,11 @@ class PDFViewerUI(Gtk.Window):
             self.btn_clear.set_active(False)
         if active and self.btn_drag.get_active():
             self.btn_drag.set_active(False)
+        if active and self.btn_resize.get_active():
+            self.btn_resize.set_active(False)
         self.annotation_widget.set_drawing_enabled(active)
         self.annotation_widget.dragging_enabled = False
+        self.annotation_widget.resizing_enabled = False
         self.annotation_widget.wis_modus = False
         self.annotation_widget.set_visible(True)
 
@@ -383,13 +389,36 @@ class PDFViewerUI(Gtk.Window):
                 self.btn_pencil.set_active(False)
             if self.btn_clear.get_active():
                 self.btn_clear.set_active(False)
+            if self.btn_resize.get_active():
+                self.btn_resize.set_active(False)
             self.annotation_widget.dragging_enabled = True
             self.annotation_widget.set_drawing_enabled(False)
+            self.annotation_widget.resizing_enabled = False
             self.annotation_widget.wis_modus = False
         else:
             self.annotation_widget.dragging_enabled = False
             if self.btn_pencil.get_active():
                 self.annotation_widget.set_drawing_enabled(True)
+        self.annotation_widget.set_visible(True)
+
+    def toggle_resize_mode(self, btn):
+        active = btn.get_active()
+        self.annotation_widget.resizing_enabled = active
+        if active:
+            if self.btn_pencil.get_active():
+                self.btn_pencil.set_active(False)
+            if self.btn_drag.get_active():
+                self.btn_drag.set_active(False)
+            if self.btn_clear.get_active():
+                self.btn_clear.set_active(False)
+            self.annotation_widget.set_drawing_enabled(False)
+            self.annotation_widget.dragging_enabled = False
+            self.annotation_widget.wis_modus = False
+        else:
+            self.annotation_widget.resizing_enabled = False
+            if self.btn_pencil.get_active():
+                self.annotation_widget.set_drawing_enabled(True)
+        self.annotation_widget.set_visible(True)
 
     def choose_color(self, button):
         dialog = Gtk.ColorChooserDialog(title="Kies annotatiekleur", parent=self)
@@ -405,11 +434,19 @@ class PDFViewerUI(Gtk.Window):
         if active:
             if self.btn_pencil.get_active():
                 self.btn_pencil.set_active(False)
+            if self.btn_drag.get_active():
+                self.btn_drag.set_active(False)
+            if self.btn_resize.get_active():
+                self.btn_resize.set_active(False)
             self.annotation_widget.wis_modus = True
             self.annotation_widget.set_drawing_enabled(False)
+            self.annotation_widget.dragging_enabled = False
+            self.annotation_widget.resizing_enabled = False
         else:
             self.annotation_widget.wis_modus = False
-            self.annotation_widget.set_drawing_enabled(self.btn_pencil.get_active())
+            if self.btn_pencil.get_active():
+                self.annotation_widget.set_drawing_enabled(True)
+        self.annotation_widget.set_visible(True)
 
     def clear_selected_annotation(self, button):
         self.annotation_widget.clear_selected_annotation()
