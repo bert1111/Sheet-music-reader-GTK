@@ -11,7 +11,7 @@ In this folder you make a folder for each orchestra where you put all your pdfs,
 Every time you open the app you can select which orchestra you need the music for.
 
 In the Concert folder you place a .txt file where you store the order of the titles separated by a comma. 
-Like: ´´´Piece, test, Arban,.... ´´´
+Like: ```Piece, test, Arban,.... ```
 This order will be kept, opening pages with "next" or "back" when the txt file is present.
 If no txt is in the folder this will be ignored and just one pdf(selected pdf) will open.
 
