@@ -42,7 +42,7 @@ class PDFViewerUI(Gtk.Window):
         vbox.pack_start(self.btn_box, False, False, 0)
 
         self.btn_open = Gtk.Button(label="Open PDF")
-        self.btn_open.connect("clicked", self.open_pdf)
+        self.btn_open.connect("clicked", self.open_orkest_map)
         self.btn_box.pack_start(self.btn_open, True, True, 0)
 
         self.btn_zoom_in = Gtk.Button(label="Zoom +")
@@ -107,6 +107,75 @@ class PDFViewerUI(Gtk.Window):
         self.overlay.connect("button-release-event", self.on_touch_up)
 
         self.connect("delete-event", self.on_quit)
+
+        # Laad persistent basispad of vraag om te selecteren
+        self.muziek_basispad = self.page_settings.get_basispad()
+        if not self.muziek_basispad or not os.path.isdir(self.muziek_basispad):
+            self.muziek_basispad = self.kies_muziek_basispad()
+        if self.muziek_basispad:
+            self.page_settings.set_basispad(self.muziek_basispad)
+            self.page_settings.save()
+            print(f"Geselecteerd basis pad voor bladmuziek: {self.muziek_basispad}")
+
+    def kies_muziek_basispad(self):
+        dialog = Gtk.FileChooserDialog(
+            title="Selecteer basis map bladmuziek",
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                     "Kies", Gtk.ResponseType.OK)
+        )
+        response = dialog.run()
+        pad = None
+        if response == Gtk.ResponseType.OK:
+            pad = dialog.get_filename()
+        dialog.destroy()
+        return pad
+
+    def lijst_orkesten(self):
+        try:
+            return sorted([d for d in os.listdir(self.muziek_basispad)
+                           if os.path.isdir(os.path.join(self.muziek_basispad, d))])
+        except Exception as e:
+            print(f"Fout bij lezen orkestmappen: {e}")
+            return []
+
+    def open_orkest_map(self, button):
+        orkesten = self.lijst_orkesten()
+        if not orkesten:
+            dlg = Gtk.MessageDialog(self, 0, Gtk.MessageType.INFO,
+                                    Gtk.ButtonsType.OK,
+                                    "Geen orkestmappen gevonden in basismap.")
+            dlg.run()
+            dlg.destroy()
+            return
+
+        dialog = Gtk.Dialog("Selecteer orkest", self, 0,
+                            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                             Gtk.STOCK_OK, Gtk.ResponseType.OK))
+
+        box = dialog.get_content_area()
+        label = Gtk.Label(label="Kies het orkest:")
+        box.add(label)
+
+        combo = Gtk.ComboBoxText()
+        for orkest in orkesten:
+            combo.append_text(orkest)
+        combo.set_active(0)
+        box.add(combo)
+
+        dialog.show_all()
+
+        resp = dialog.run()
+        pad_or_kest = None
+        if resp == Gtk.ResponseType.OK:
+            actieve_index = combo.get_active()
+            if actieve_index >= 0:
+                geselecteerd_orkest = orkesten[actieve_index]
+                pad_or_kest = os.path.join(self.muziek_basispad, geselecteerd_orkest)
+        dialog.destroy()
+
+        if pad_or_kest:
+            open_pdf_filechooser(self.load_pdf, start_folder=pad_or_kest)
 
     def _create_navigation_buttons(self):
         def make_invisible_button():
@@ -345,6 +414,29 @@ class PDFViewerUI(Gtk.Window):
         self.btn_box.set_visible(not visible)
         self.longpress_source_id = None
         return False
+
+def open_pdf_filechooser(callback, start_folder=None):
+    dialog = Gtk.FileChooserDialog(
+        title="Selecteer PDF-bestand",
+        action=Gtk.FileChooserAction.OPEN)
+    dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+                       Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+
+    filter_pdf = Gtk.FileFilter()
+    filter_pdf.set_name("PDF-bestanden")
+    filter_pdf.add_pattern("*.pdf")
+    dialog.add_filter(filter_pdf)
+
+    if start_folder:
+        try:
+            dialog.set_current_folder(start_folder)
+        except Exception as e:
+            print(f"Fout bij instellen startmap filechooser: {e}")
+
+    response = dialog.run()
+    if response == Gtk.ResponseType.OK:
+        callback(dialog.get_filename())
+    dialog.destroy()
 
 def main():
     win = PDFViewerUI()

@@ -1,4 +1,3 @@
-#page_settings.py
 import json
 import os
 
@@ -46,3 +45,10 @@ class PageSettings:
             "scroll_y": scroll_y
         })
         self.settings[filepath][str(page_number)] = existing
+
+    # Toegevoegd: persistent opslag basispad van de muziek map
+    def get_basispad(self):
+        return self.settings.get("_app_basispad_", None)
+
+    def set_basispad(self, pad):
+        self.settings["_app_basispad_"] = pad
