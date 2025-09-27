@@ -7,5 +7,6 @@ This version is tested and some features work, like persistent zoom level and sc
 
 Library is to be added.
 Annotations work partially, but are not placed accurately when pdf is rotated.
+I added a drag button to drag annotations as a partial fix.
 
 If someone can help with this, please do so because I am not a programmer.

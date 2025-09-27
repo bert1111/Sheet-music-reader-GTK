@@ -57,9 +57,14 @@ class PDFViewerUI(Gtk.Window):
         self.btn_rotate.connect("clicked", self.rotate)
         self.btn_box.pack_start(self.btn_rotate, True, True, 0)
 
-        self.btn_pencil = Gtk.ToggleButton(label="Potlood aan/uit")
+        self.btn_pencil = Gtk.ToggleButton(label="Tekenen")
         self.btn_pencil.connect("toggled", self.toggle_pencil)
         self.btn_box.pack_start(self.btn_pencil, True, True, 0)
+
+        self.btn_drag = Gtk.ToggleButton(label="Annotatie slepen")
+        self.btn_drag.set_tooltip_text("Annotatie slepen aan/uit")
+        self.btn_drag.connect("toggled", self.toggle_drag_mode)
+        self.btn_box.pack_start(self.btn_drag, True, True, 0)
 
         self.btn_choose_color = Gtk.Button(label="Kies kleur")
         self.btn_choose_color.connect("clicked", self.choose_color)
@@ -164,16 +169,15 @@ class PDFViewerUI(Gtk.Window):
         if res:
             pixbuf, pdf_size = res
             self.image.set_from_pixbuf(pixbuf)
-            
-            # *** NIEUW: Stel PDF-dimensies in op de annotation widget ***
+
             if pdf_size:
                 self.annotation_widget.set_pdf_dimensions(pdf_size[0], pdf_size[1])
-            
+
             while Gtk.events_pending():
                 Gtk.main_iteration()
         else:
             self.image.clear()
-        
+
         self.annotation_widget.set_zoom_and_rotation(self.current_zoom, self.current_rotation)
 
         hadjust = self.scrolled_window.get_hadjustment()
@@ -231,8 +235,27 @@ class PDFViewerUI(Gtk.Window):
         active = btn.get_active()
         if active and self.btn_clear.get_active():
             self.btn_clear.set_active(False)
+        if active and self.btn_drag.get_active():
+            self.btn_drag.set_active(False)
         self.annotation_widget.set_drawing_enabled(active)
+        self.annotation_widget.dragging_enabled = False
+        self.annotation_widget.wis_modus = False
         self.annotation_widget.set_visible(True)
+
+    def toggle_drag_mode(self, btn):
+        active = btn.get_active()
+        if active:
+            if self.btn_pencil.get_active():
+                self.btn_pencil.set_active(False)
+            if self.btn_clear.get_active():
+                self.btn_clear.set_active(False)
+            self.annotation_widget.dragging_enabled = True
+            self.annotation_widget.set_drawing_enabled(False)
+            self.annotation_widget.wis_modus = False
+        else:
+            self.annotation_widget.dragging_enabled = False
+            if self.btn_pencil.get_active():
+                self.annotation_widget.set_drawing_enabled(True)
 
     def choose_color(self, button):
         dialog = Gtk.ColorChooserDialog(title="Kies annotatiekleur", parent=self)
