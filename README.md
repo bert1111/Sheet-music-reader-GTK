@@ -20,3 +20,5 @@ Annotations work partially, but are not placed accurately when pdf is rotated.
 I added a drag button to drag annotations as a partial fix.
 
 If someone can help with this, please do so because I am not a programmer.
+
+I used msys2 mingw64 for testing on windows.
